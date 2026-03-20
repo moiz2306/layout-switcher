@@ -233,7 +233,7 @@ rm -f ~/Library/LaunchAgents/com.layout-switcher.plist
 rm -rf ~/.config/layout-switcher
 
 # Remove the project
-rm -rf ~/Projects/layout-switcher
+rm -rf ~/layout-switcher
 ```
 
 ## Tech stack
