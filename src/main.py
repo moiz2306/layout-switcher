@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Layout Switcher — auto-detect and correct wrong keyboard layout."""
+import logging
+import sys
+import threading
+from pathlib import Path
+
+import objc
+from AppKit import NSApplication, NSApp, NSApplicationActivationPolicyAccessory
+from Foundation import NSObject
+from PyObjCTools import AppHelper
+from Quartz import CGPreflightListenEventAccess, CGPreflightPostEventAccess
+
+from config import Config
+from correction_tracker import CorrectionTracker
+from keyboard_monitor import KeyboardMonitor
+from onboarding_window import OnboardingWindow, onboarding_done
+from settings_window import get_settings_window
+from status_bar import StatusBar
+
+
+class AppDelegate(NSObject):
+    def applicationWillTerminate_(self, notification):
+        logging.getLogger("layout-switcher").info("Layout Switcher stopped.")
+
+
+def setup_logging(config: Config):
+    log_dir = Path.home() / ".config" / "layout-switcher"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handlers = [logging.StreamHandler()]
+    if config.log_errors:
+        handlers.append(logging.FileHandler(log_dir / "layout-switcher.log"))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=handlers,
+    )
+
+
+def main():
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+    delegate = AppDelegate.alloc().init()
+    app.setDelegate_(delegate)
+
+    config = Config()
+    setup_logging(config)
+    logger = logging.getLogger("layout-switcher")
+
+    tracker = CorrectionTracker()
+
+    # Check permissions
+    has_listen = CGPreflightListenEventAccess()
+    has_post = CGPreflightPostEventAccess()
+
+    # Show onboarding on first launch
+    if not onboarding_done():
+        onboarding = OnboardingWindow.alloc().init()
+        onboarding.run_modal()
+        has_listen = CGPreflightListenEventAccess()
+        has_post = CGPreflightPostEventAccess()
+
+    # Create settings window (lazy singleton)
+    settings = get_settings_window(config)
+
+    # Create status bar
+    status_bar = StatusBar.alloc().initWithConfig_tracker_(config, tracker)
+    status_bar.set_settings_callback(settings.show)
+
+    # Start monitor only if permissions are granted
+    if has_listen and has_post:
+        monitor = KeyboardMonitor(config, tracker)
+
+        # Register LanguageDetector reload on config change
+        config.add_observer(monitor._language_detector.reload_ignore_words)
+
+        monitor_thread = threading.Thread(target=monitor.start, daemon=True)
+        monitor_thread.start()
+        status_bar.set_active()
+        logger.info("Layout Switcher started with full permissions.")
+    else:
+        status_bar.set_error()
+        logger.warning("Permissions missing, monitor not started.")
+
+    AppHelper.runEventLoop()
+
+
+if __name__ == "__main__":
+    main()
