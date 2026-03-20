@@ -1,0 +1,5 @@
+pyobjc-framework-Quartz>=10.0
+pyobjc-framework-Cocoa>=10.0
+pymorphy3>=2.0
+pyyaml>=6.0
+pytest>=8.0

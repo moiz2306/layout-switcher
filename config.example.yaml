@@ -1,0 +1,13 @@
+# Layout Switcher Configuration
+enabled: true
+hotkey_convert: "ctrl+shift+space"
+excluded_apps: []
+ignore_words:
+  - "gg"
+  - "ok"
+  - "lol"
+  - "bb"
+  - "wp"
+  - "gl"
+  - "hf"
+log_errors: true
