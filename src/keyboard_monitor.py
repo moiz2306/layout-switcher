@@ -34,7 +34,7 @@ from AppKit import (
 from word_buffer import WordBuffer
 from layout_mapper import LayoutMapper
 from language_detector import LanguageDetector
-from auto_corrector import AutoCorrector
+from auto_corrector import AutoCorrector, SYNTHETIC_MARKER_FIELD, SYNTHETIC_MARKER_VALUE
 from app_filter import AppFilter
 from config import Config
 
@@ -109,6 +109,11 @@ class KeyboardMonitor:
         if event_type != kCGEventKeyDown:
             return event
 
+        # Let our own synthetic events (corrections) pass through untouched.
+        # Without this, we block our own backspaces and typed characters.
+        if CGEventGetIntegerValueField(event, SYNTHETIC_MARKER_FIELD) == SYNTHETIC_MARKER_VALUE:
+            return event
+
         if self._auto_corrector.is_correcting:
             char = self._get_char_from_event(event)
             if char:
@@ -142,7 +147,7 @@ class KeyboardMonitor:
         if result is not None:
             word, boundary = result
             self._last_completed_word = (word, boundary)
-            if len(word) > 2 and not self._language_detector.is_ignored(word) and word.isalpha():
+            if len(word) >= 2 and not self._language_detector.is_ignored(word) and self._could_be_word(word):
                 self._detection_queue.put(("check", (word, boundary)))
 
         return event
@@ -154,23 +159,73 @@ class KeyboardMonitor:
                 self._handle_hotkey()
             elif action == "check":
                 word, boundary = data
-                self._check_and_correct(word, boundary)
-            self._auto_corrector.replay_buffered(self)
+                # Skip stale corrections — if queue has newer words, this word
+                # is no longer adjacent to the cursor, backspaces would hit wrong text.
+                if not self._is_stale():
+                    self._check_and_correct(word, boundary)
+                else:
+                    logger.debug("Skipping stale correction for '%s'", word)
+            # Replay any user keystrokes buffered during correction and
+            # feed them back into word_buffer so detection stays in sync.
+            replayed = self._auto_corrector.drain_replay_buffer()
+            for char in replayed:
+                self._auto_corrector._type_string(char)
+                result = self._word_buffer.add_char(char)
+                if result is not None:
+                    rword, rboundary = result
+                    self._last_completed_word = (rword, rboundary)
+                    if len(rword) >= 2 and not self._language_detector.is_ignored(rword) and self._could_be_word(rword):
+                        self._check_and_correct(rword, rboundary)
 
     def _check_and_correct(self, word: str, boundary: str):
+        extra = self._word_buffer.current_word()
+
+        # Try full word first
+        result = self._try_detect(word)
+        if result:
+            original, corrected = result
+            conv_boundary = self._convert_boundary(boundary, word)
+            self._auto_corrector.correct(original, corrected, conv_boundary, extra)
+            if self._tracker:
+                self._tracker.record(original, corrected)
+            return
+
+        # Trailing trimming: if full word fails, strip trailing ambiguous chars
+        # (e.g. "ghbdtn," → "приветб" fails → trim "," → "ghbdtn" → "привет")
+        trimmed = word
+        trailing = ""
+        while trimmed and trimmed[-1] in WordBuffer.LAYOUT_LETTER_KEYS:
+            trailing = trimmed[-1] + trailing
+            trimmed = trimmed[:-1]
+            if len(trimmed) >= 2 and self._could_be_word(trimmed):
+                result = self._try_detect(trimmed)
+                if result:
+                    original, corrected = result
+                    # trailing stays as typed (punctuation), boundary gets converted
+                    conv_boundary = self._convert_boundary(boundary, trimmed)
+                    full_boundary = trailing + conv_boundary
+                    self._auto_corrector.correct(original, corrected, full_boundary, extra)
+                    if self._tracker:
+                        self._tracker.record(original, corrected)
+                    return
+
+    def _try_detect(self, word: str) -> tuple[str, str] | None:
+        """Try to detect if word needs correction. Returns (original, corrected) or None."""
         en_version, ru_version = self._layout_mapper.convert_word(word)
         if self._layout_mapper.is_cyrillic(word):
-            decision = self._language_detector.check(word, en_version)
-            if decision == "correct":
-                self._auto_corrector.correct(word, en_version, boundary)
-                if self._tracker:
-                    self._tracker.record(word, en_version)
+            if self._language_detector.check(word, en_version) == "correct":
+                return (word, en_version)
         else:
-            decision = self._language_detector.check(word, ru_version)
-            if decision == "correct":
-                self._auto_corrector.correct(word, ru_version, boundary)
-                if self._tracker:
-                    self._tracker.record(word, ru_version)
+            if self._language_detector.check(word, ru_version) == "correct":
+                return (word, ru_version)
+        return None
+
+    def _convert_boundary(self, boundary: str, word: str) -> str:
+        """Convert boundary char through layout mapper (e.g. '/' → '.')."""
+        if self._layout_mapper.is_cyrillic(word):
+            return self._layout_mapper.convert(boundary, "ru_to_en")
+        else:
+            return self._layout_mapper.convert(boundary, "en_to_ru")
 
     def _handle_hotkey(self):
         if self._auto_corrector.has_undoable_correction():
@@ -189,6 +244,14 @@ class KeyboardMonitor:
         if length > 0 and chars:
             return chars[0]
         return None
+
+    def _is_stale(self) -> bool:
+        """Return True if detection queue has more items (word is not the latest)."""
+        return not self._detection_queue.empty()
+
+    def _could_be_word(self, word: str) -> bool:
+        """Check if word could be a real word — letters + layout-mapped chars only."""
+        return all(c.isalpha() or c in WordBuffer.LAYOUT_LETTER_KEYS for c in word)
 
     def _is_hotkey(self, flags: int, keycode: int) -> bool:
         ctrl = flags & kCGEventFlagMaskControl

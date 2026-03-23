@@ -6,6 +6,7 @@ from Quartz import (
     CGEventCreateKeyboardEvent,
     CGEventPost,
     CGEventSetFlags,
+    CGEventSetIntegerValueField,
     CGEventSourceCreate,
     kCGEventSourceStateHIDSystemState,
     kCGHIDEventTap,
@@ -14,6 +15,17 @@ from Quartz import (
 
 
 UNDO_TIMEOUT = 10  # seconds
+
+# Marker to identify our synthetic events in the CGEventTap callback.
+# Field 42 = kCGEventSourceUserData. We tag all synthetic events so the
+# keyboard monitor can let them pass through instead of blocking them.
+SYNTHETIC_MARKER_FIELD = 42
+SYNTHETIC_MARKER_VALUE = 0x4C53  # "LS" — Layout Switcher
+
+# Minimal delay between individual synthetic events (keep low for speed).
+EVENT_DELAY = 0.001  # 1 ms
+# Delay between backspace block and typing block (let app process deletions).
+BLOCK_DELAY = 0.008  # 8 ms
 
 
 @dataclass
@@ -60,6 +72,12 @@ class AutoCorrector:
         """Buffer a keystroke that arrived during correction."""
         self._replay_buffer.append(char)
 
+    def drain_replay_buffer(self) -> list[str]:
+        """Return and clear all buffered keystrokes."""
+        chars = self._replay_buffer[:]
+        self._replay_buffer.clear()
+        return chars
+
     def replay_buffered(self, monitor):
         """Replay any keystrokes that were buffered during correction."""
         if not self._replay_buffer:
@@ -69,15 +87,18 @@ class AutoCorrector:
         for char in chars:
             self._type_string(char)
 
-    def correct(self, original: str, corrected: str, boundary: str):
-        """Delete the original word + boundary, type the corrected word + boundary."""
+    def correct(self, original: str, corrected: str, boundary: str, extra: str = ""):
+        """Delete the original word + boundary + extra, type corrected + boundary + extra."""
         with self._lock:
             self._is_correcting = True
             try:
-                delete_count = len(original) + len(boundary)
+                delete_count = len(original) + len(boundary) + len(extra)
                 self._send_backspaces(delete_count)
+                time.sleep(BLOCK_DELAY)
                 self._type_string(corrected)
                 self._type_string(boundary)
+                if extra:
+                    self._type_string(extra)
                 self._last_correction = CorrectionRecord(
                     original=original,
                     corrected=corrected,
@@ -97,6 +118,7 @@ class AutoCorrector:
             try:
                 delete_count = len(rec.corrected) + len(rec.boundary)
                 self._send_backspaces(delete_count)
+                time.sleep(BLOCK_DELAY)
                 self._type_string(rec.original)
                 self._type_string(rec.boundary)
                 self._last_correction = None
@@ -107,10 +129,16 @@ class AutoCorrector:
         """Manually convert last word (triggered by hotkey)."""
         self.correct(original, converted, boundary)
 
+    def _mark_synthetic(self, event):
+        """Tag event as ours so the CGEventTap callback lets it through."""
+        CGEventSetIntegerValueField(event, SYNTHETIC_MARKER_FIELD, SYNTHETIC_MARKER_VALUE)
+
     def _send_backspaces(self, count: int):
         for _ in range(count):
             ev_down = CGEventCreateKeyboardEvent(self._source, BACKSPACE_KEYCODE, True)
             ev_up = CGEventCreateKeyboardEvent(self._source, BACKSPACE_KEYCODE, False)
+            self._mark_synthetic(ev_down)
+            self._mark_synthetic(ev_up)
             CGEventPost(kCGHIDEventTap, ev_down)
             CGEventPost(kCGHIDEventTap, ev_up)
 
@@ -122,5 +150,7 @@ class AutoCorrector:
             ev_up = CGEventCreateKeyboardEvent(self._source, 0, False)
             CGEventKeyboardSetUnicodeString(ev_down, len(char), char)
             CGEventKeyboardSetUnicodeString(ev_up, len(char), char)
+            self._mark_synthetic(ev_down)
+            self._mark_synthetic(ev_up)
             CGEventPost(kCGHIDEventTap, ev_down)
             CGEventPost(kCGHIDEventTap, ev_up)

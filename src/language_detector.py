@@ -11,6 +11,7 @@ class LanguageDetector:
     def __init__(self, config: Config | None = None):
         self._config = config or Config()
         self._morph = pymorphy3.MorphAnalyzer()
+        self._morph.parse("тест")  # warmup — preload dictionary data
         self._en_words = self._load_english_wordlist()
         self._ignore = set(w.lower() for w in self._config.ignore_words)
 

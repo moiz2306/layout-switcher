@@ -1,7 +1,14 @@
 class WordBuffer:
     """Buffers keystrokes and detects word boundaries."""
 
-    BOUNDARIES = frozenset(" \n\r\t.,!?;:()[]{}\"'<>/\\|@#$%^&*~`+-=")
+    # QWERTY keys that map to Russian LETTERS on ЙЦУКЕН layout.
+    # Without Shift: , → б, . → ю, ' → э, ; → ж, [ → х, ] → ъ, ` → ё
+    # With Shift:    ~ → Ё, { → Х, } → Ъ, : → Ж, " → Э, < → Б, > → Ю
+    LAYOUT_LETTER_KEYS = frozenset(",.';[]`~{}:" + '"' + "<>")
+
+    # True word boundaries — excludes ALL chars that map to Russian letters.
+    # Shift-punctuation that maps to punctuation (? @ # $ ^ &) stays as boundary.
+    BOUNDARIES = frozenset(" \n\r\t!?()/\\|@#$%^&*+-=")
 
     def __init__(self):
         self._buffer: list[str] = []

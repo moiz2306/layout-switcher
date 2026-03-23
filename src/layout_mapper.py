@@ -4,9 +4,17 @@ class LayoutMapper:
     EN_CHARS = "`qwertyuiop[]asdfghjkl;'zxcvbnm,./"
     RU_CHARS = "ёйцукенгшщзхъфывапролджэячсмитьбю."
 
+    # Shift-level mapping: same physical keys with Shift held.
+    # Punctuation→letter: ~ { } : " < > → Ё Х Ъ Ж Э Б Ю
+    # Punctuation→punctuation: ? @ # $ ^ & → , " № ; : ?
+    EN_SHIFT_CHARS = '~{}:"<>?@#$^&'
+    RU_SHIFT_CHARS = 'ЁХЪЖЭБЮ,"№;:?'
+
     def __init__(self):
         self._en_to_ru = {}
         self._ru_to_en = {}
+
+        # Base level (no Shift)
         for en, ru in zip(self.EN_CHARS, self.RU_CHARS):
             self._en_to_ru[en] = ru
             self._ru_to_en[ru] = en
@@ -17,6 +25,11 @@ class LayoutMapper:
                 self._en_to_ru[en.upper()] = ru.upper()
             if ru.upper() != ru:
                 self._ru_to_en[ru.upper()] = en.upper()
+
+        # Shift level (Shift held — punctuation keys)
+        for en, ru in zip(self.EN_SHIFT_CHARS, self.RU_SHIFT_CHARS):
+            self._en_to_ru[en] = ru
+            self._ru_to_en[ru] = en
 
     def convert(self, text: str, direction: str) -> str:
         mapping = self._en_to_ru if direction == "en_to_ru" else self._ru_to_en

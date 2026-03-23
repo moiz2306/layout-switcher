@@ -59,3 +59,52 @@ def test_is_cyrillic():
     assert mapper.is_cyrillic("привет") is True
     assert mapper.is_cyrillic("hello") is False
     assert mapper.is_cyrillic("hello1привет") is True  # has cyrillic chars
+
+
+# --- Shift-level mapping ---
+
+
+def test_shift_punctuation_en_to_ru():
+    """Shift+key punctuation: ? → , (comma), & → ?, ^ → :, $ → ;, @ → \", # → №"""
+    mapper = LayoutMapper()
+    assert mapper.convert("?", "en_to_ru") == ","
+    assert mapper.convert("&", "en_to_ru") == "?"
+    assert mapper.convert("^", "en_to_ru") == ":"
+    assert mapper.convert("$", "en_to_ru") == ";"
+    assert mapper.convert("@", "en_to_ru") == '"'
+    assert mapper.convert("#", "en_to_ru") == "№"
+
+
+def test_shift_letters_en_to_ru():
+    """Shift+key where EN punctuation → RU uppercase letter."""
+    mapper = LayoutMapper()
+    assert mapper.convert("~", "en_to_ru") == "Ё"
+    assert mapper.convert("{", "en_to_ru") == "Х"
+    assert mapper.convert("}", "en_to_ru") == "Ъ"
+    assert mapper.convert(":", "en_to_ru") == "Ж"
+    assert mapper.convert('"', "en_to_ru") == "Э"
+    assert mapper.convert("<", "en_to_ru") == "Б"
+    assert mapper.convert(">", "en_to_ru") == "Ю"
+
+
+def test_shift_letters_ru_to_en():
+    """RU uppercase letters → EN shift punctuation."""
+    mapper = LayoutMapper()
+    assert mapper.convert("Ё", "ru_to_en") == "~"
+    assert mapper.convert("Х", "ru_to_en") == "{"
+    assert mapper.convert("Ъ", "ru_to_en") == "}"
+    assert mapper.convert("Ж", "ru_to_en") == ":"
+    assert mapper.convert("Э", "ru_to_en") == '"'
+    assert mapper.convert("Б", "ru_to_en") == "<"
+    assert mapper.convert("Ю", "ru_to_en") == ">"
+
+
+def test_shift_punctuation_ru_to_en():
+    """RU shift punctuation → EN shift punctuation."""
+    mapper = LayoutMapper()
+    assert mapper.convert(",", "ru_to_en") == "?"  # RU comma (shift+/) → EN ?
+    assert mapper.convert("?", "ru_to_en") == "&"  # RU ? → EN &
+    assert mapper.convert(":", "ru_to_en") == "^"  # RU : → EN ^
+    assert mapper.convert(";", "ru_to_en") == "$"  # RU ; → EN $
+    assert mapper.convert('"', "ru_to_en") == "@"  # RU " → EN @
+    assert mapper.convert("№", "ru_to_en") == "#"  # RU № → EN #
